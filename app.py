@@ -81,11 +81,16 @@ def mean_pooling(model_output, attention_mask):
 
 # Function to get embeddings
 def get_embedding(texts, tokenizer, model):
-    encoded_input = tokenizer(texts, padding=True, truncation=True, return_tensors='pt', max_length=512)
-    with torch.no_grad():
-        model_output = model(**encoded_input)
-    sentence_embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
-    return sentence_embeddings.numpy()
+    try:
+        encoded_input = tokenizer(texts, padding=True, truncation=True, return_tensors='pt', max_length=512)
+        with torch.no_grad():
+            model_output = model(**encoded_input)
+        sentence_embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
+        return sentence_embeddings.numpy()
+    except Exception as e:
+        st.error(f"Error generating embeddings: {str(e)}")
+        # Return a fallback embedding of zeros
+        return np.zeros((len(texts), 384)) 
 
 # Extract keywords from text
 def extract_keywords(text, keyword_extractor, top_n=10):
@@ -99,20 +104,36 @@ def extract_keywords(text, keyword_extractor, top_n=10):
     
     candidates = count_vectorizer.get_feature_names_out()
     
+    # Handle empty candidates case
+    if len(candidates) == 0:
+        return []
+    
     # Get word embeddings
     candidate_embeddings = keyword_extractor(list(candidates))
-    candidate_embeddings = [np.mean(emb, axis=0) for emb in candidate_embeddings]
+    
+    # Properly reshape embeddings for similarity calculation
+    processed_embeddings = []
+    for emb in candidate_embeddings:
+        processed_embeddings.append(np.mean(emb, axis=0))
+    
+    # Convert to numpy array with proper shape
+    processed_embeddings = np.array(processed_embeddings).reshape(len(candidates), -1)
     
     # Calculate distances and extract keywords
-    distances = cosine_similarity(candidate_embeddings)
-    
-    # Get top keywords based on similarity
-    keywords = [(candidates[idx], float(np.mean(distances[idx]))) 
-                for idx in range(len(candidates))]
-    
-    # Sort by score and select top N
-    keywords = sorted(keywords, key=lambda x: x[1], reverse=True)
-    return keywords[:top_n]
+    try:
+        distances = cosine_similarity(processed_embeddings)
+        
+        # Get top keywords based on similarity
+        keywords = [(candidates[idx], float(np.mean(distances[idx]))) 
+                    for idx in range(len(candidates))]
+        
+        # Sort by score and select top N
+        keywords = sorted(keywords, key=lambda x: x[1], reverse=True)
+        return keywords[:top_n]
+    except Exception as e:
+        st.error(f"Error calculating keyword similarity: {str(e)}")
+        # Return a subset of candidates as fallback
+        return [(candidate, 1.0) for candidate in candidates[:min(top_n, len(candidates))]]
 
 # Parse LaTeX file
 def parse_latex(latex_content):
